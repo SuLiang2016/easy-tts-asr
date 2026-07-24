@@ -17,6 +17,17 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const stopRecording = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  }, []);
+
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -51,21 +62,10 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
           return prev + 1;
         });
       }, 1000);
-    } catch (err) {
+    } catch {
       alert("无法访问麦克风，请检查权限设置");
     }
-  }, [maxDurationSeconds, onAudioReady]);
-
-  const stopRecording = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-    setIsRecording(false);
-  }, []);
+  }, [maxDurationSeconds, onAudioReady, stopRecording]);
 
   const clearRecording = useCallback(() => {
     setRecordedFile(null);

@@ -6,7 +6,7 @@ import { Copy, Volume2, Sparkles, FileAudio } from "lucide-react";
 import { speechToText } from "@/app/actions";
 import { polishText } from "@/app/actions-llm";
 import { Button } from "@/components/ui/button";
-import { Textarea, Label } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/input";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { AudioRecorder } from "@/components/audio-recorder";

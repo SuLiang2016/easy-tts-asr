@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export interface LLMConfig {
   apiKey: string;
@@ -19,27 +19,24 @@ const DEFAULT_CONFIG: LLMConfig = {
 };
 
 export function useLLMConfig() {
-  const [config, setConfig] = useState<LLMConfig>(DEFAULT_CONFIG);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
+  const [config, setConfig] = useState<LLMConfig>(() => {
+    if (typeof window === "undefined") return DEFAULT_CONFIG;
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
-        setConfig({ ...DEFAULT_CONFIG, ...JSON.parse(stored) });
+        return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
       }
     } catch {
-      // ignore
     }
-    setMounted(true);
-  }, []);
+    return DEFAULT_CONFIG;
+  });
 
   const saveConfig = (newConfig: LLMConfig) => {
     setConfig(newConfig);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(newConfig));
   };
 
-  const hasConfig = mounted && !!config.apiKey && !!config.baseUrl && !!config.model;
+  const hasConfig = !!config.apiKey && !!config.baseUrl && !!config.model;
 
-  return { config, saveConfig, hasConfig, mounted };
+  return { config, saveConfig, hasConfig, mounted: true };
 }

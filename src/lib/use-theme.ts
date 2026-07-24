@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 type Theme = "light" | "dark";
 
@@ -28,16 +28,13 @@ function applyTheme(theme: Theme) {
 }
 
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>("light");
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "light";
     const stored = getStoredTheme();
     const initial = stored || getSystemTheme();
-    setTheme(initial);
     applyTheme(initial);
-    setMounted(true);
-  }, []);
+    return initial;
+  });
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -46,5 +43,5 @@ export function useTheme() {
     localStorage.setItem(STORAGE_KEY, next);
   };
 
-  return { theme, toggleTheme, mounted };
+  return { theme, toggleTheme, mounted: true };
 }

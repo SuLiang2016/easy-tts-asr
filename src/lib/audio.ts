@@ -1,13 +1,13 @@
 /**
- * 将 base64 字符串转换为 Uint8Array（浏览器端可用）
+ * 将 base64 字符串转换为 ArrayBuffer（浏览器端可用）
  */
-export function base64ToUint8Array(base64: string): Uint8Array {
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
   for (let i = 0; i < binaryString.length; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
-  return bytes;
+  return bytes.buffer;
 }
 
 /**

@@ -1,11 +1,8 @@
 const VOLC_API_KEY = process.env.VOLC_API_KEY;
-const VOLC_TTS_APP_ID = process.env.VOLC_TTS_APP_ID;
-const VOLC_TTS_ACCESS_TOKEN = process.env.VOLC_TTS_ACCESS_TOKEN;
 const VOLC_TTS_HTTP_URL = process.env.VOLC_TTS_HTTP_URL || "https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional";
 const VOLC_TTS_RESOURCE_ID = process.env.VOLC_TTS_RESOURCE_ID || "seed-tts-2.0";
+const VOLC_ASR_HTTP_URL = process.env.VOLC_ASR_HTTP_URL || "https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash";
 const VOLC_ASR_RESOURCE_ID = process.env.VOLC_ASR_RESOURCE_ID || "volc.bigasr.auc_turbo";
-
-const useNewAuth = !!VOLC_API_KEY;
 
 export interface TTSOptions {
   text: string;
@@ -143,33 +140,24 @@ export interface ASRResult {
   duration: number;
 }
 
-/**
- * 语音识别 - 极速版识别接口
- * 一次请求直接返回识别结果
- */
 export async function recognizeSpeech(options: ASROptions): Promise<ASRResult> {
   const { audioBase64, format = "wav", language = "zh-CN" } = options;
 
+  if (!VOLC_API_KEY) {
+    throw new Error("请配置 VOLC_API_KEY");
+  }
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "X-Api-Key": VOLC_API_KEY,
     "X-Api-Request-Id": crypto.randomUUID(),
     "X-Api-Resource-Id": VOLC_ASR_RESOURCE_ID,
     "X-Api-Sequence": "-1",
   };
 
-  if (useNewAuth) {
-    headers["X-Api-Key"] = VOLC_API_KEY!;
-  } else {
-    if (!VOLC_TTS_APP_ID || !VOLC_TTS_ACCESS_TOKEN) {
-      throw new Error("请配置 VOLC_API_KEY 或 VOLC_TTS_APP_ID + VOLC_TTS_ACCESS_TOKEN");
-    }
-    headers["X-Api-App-Key"] = VOLC_TTS_APP_ID;
-    headers["X-Api-Access-Key"] = VOLC_TTS_ACCESS_TOKEN;
-  }
-
   const body = {
     user: {
-      uid: VOLC_TTS_APP_ID || "hello-tts-user",
+      uid: "hello-tts-user",
     },
     audio: {
       data: audioBase64,
@@ -183,13 +171,15 @@ export async function recognizeSpeech(options: ASROptions): Promise<ASRResult> {
     },
   };
 
-  const response = await fetch("https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash", {
+  const response = await fetch(VOLC_ASR_HTTP_URL, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
   });
 
-  const responseData = await response.json() as {
+  const logId = response.headers.get("X-Tt-Logid") || response.headers.get("x-tt-logid") || "";
+
+  let responseData: {
     result?: {
       text?: string;
       additions?: {
@@ -199,8 +189,14 @@ export async function recognizeSpeech(options: ASROptions): Promise<ASRResult> {
     message?: string;
   };
 
+  try {
+    responseData = await response.json();
+  } catch (err) {
+    throw new Error(`ASR 响应解析失败: ${err instanceof Error ? err.message : "未知错误"}${logId ? ` logid=${logId}` : ""}`);
+  }
+
   if (!response.ok) {
-    throw new Error(`ASR 请求失败: ${response.status} ${responseData.message || JSON.stringify(responseData)}`);
+    throw new Error(`ASR 请求失败: ${response.status}${logId ? ` logid=${logId}` : ""} ${responseData.message || JSON.stringify(responseData)}`);
   }
 
   const text = responseData.result?.text || "";

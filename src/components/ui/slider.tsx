@@ -1,9 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { SliderHTMLAttributes } from "react";
+import { InputHTMLAttributes } from "react";
 
-interface SliderProps extends SliderHTMLAttributes<HTMLInputElement> {
+interface SliderProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   valueDisplay?: string;
 }

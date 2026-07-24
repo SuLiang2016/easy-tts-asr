@@ -112,7 +112,7 @@ export default function TTSPage() {
               variant="outline"
               size="sm"
               onClick={handlePolish}
-              disabled={!hasConfig || !text.trim() || isLoading || isPending}
+              disabled={!hasConfig || !text.trim() || isLoading}
               className="gap-1.5"
             >
               <Sparkles className="h-4 w-4" />

@@ -12,6 +12,7 @@ import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { VOICES, FEATURED_VOICES, FUN_VOICES } from "@/lib/voices";
 import { useLLMConfig } from "@/lib/use-llm-config";
+import { base64ToUint8Array } from "@/lib/audio";
 
 const MAX_TEXT_LENGTH = 250; // 约 1024 字节的 80%
 
@@ -45,7 +46,8 @@ export default function TTSPage() {
         });
 
         if (result.success && result.audioBase64) {
-          const blob = new Blob([Buffer.from(result.audioBase64, "base64")], { type: "audio/mp3" });
+          const bytes = base64ToUint8Array(result.audioBase64);
+          const blob = new Blob([bytes], { type: "audio/mp3" });
           setAudioSrc(URL.createObjectURL(blob));
         } else {
           setError(result.error || "生成失败");

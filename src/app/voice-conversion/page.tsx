@@ -10,7 +10,7 @@ import { AudioPlayer } from "@/components/ui/audio-player";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { AudioRecorder } from "@/components/audio-recorder";
-import { fileToBase64, convertToWav } from "@/lib/audio";
+import { fileToBase64, convertToWav, base64ToUint8Array } from "@/lib/audio";
 import { VOICES, FEATURED_VOICES, FUN_VOICES } from "@/lib/voices";
 
 const MAX_FILE_SIZE_MB = 20;
@@ -80,7 +80,8 @@ export default function VoiceConversionPage() {
 
         if (result.success && result.audioBase64) {
           setRecognizedText(result.text || "");
-          const blob = new Blob([Buffer.from(result.audioBase64, "base64")], { type: "audio/mp3" });
+          const bytes = base64ToUint8Array(result.audioBase64);
+          const blob = new Blob([bytes], { type: "audio/mp3" });
           setAudioSrc(URL.createObjectURL(blob));
         } else {
           setError(result.error || "换声失败");

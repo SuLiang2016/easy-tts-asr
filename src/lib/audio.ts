@@ -1,4 +1,16 @@
 /**
+ * 将 base64 字符串转换为 Uint8Array（浏览器端可用）
+ */
+export function base64ToUint8Array(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
  * 将音频文件转换为 base64 字符串
  */
 export function fileToBase64(file: File): Promise<string> {

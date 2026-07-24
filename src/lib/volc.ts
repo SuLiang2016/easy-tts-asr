@@ -1,14 +1,10 @@
-// 火山引擎语音 API 基础配置
-// 支持新版控制台 (X-Api-Key) 和旧版控制台 (appid + token) 两种鉴权方式
-
 const VOLC_API_KEY = process.env.VOLC_API_KEY;
 const VOLC_TTS_APP_ID = process.env.VOLC_TTS_APP_ID;
 const VOLC_TTS_ACCESS_TOKEN = process.env.VOLC_TTS_ACCESS_TOKEN;
-const VOLC_TTS_CLUSTER = process.env.VOLC_TTS_CLUSTER || "volcano_tts";
-const VOLC_TTS_RESOURCE_ID = process.env.VOLC_TTS_RESOURCE_ID || "volc.service_type.10029";
+const VOLC_TTS_HTTP_URL = process.env.VOLC_TTS_HTTP_URL || "https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional";
+const VOLC_TTS_RESOURCE_ID = process.env.VOLC_TTS_RESOURCE_ID || "seed-tts-2.0";
 const VOLC_ASR_RESOURCE_ID = process.env.VOLC_ASR_RESOURCE_ID || "volc.bigasr.auc_turbo";
 
-// 优先使用新版控制台 API Key
 const useNewAuth = !!VOLC_API_KEY;
 
 export interface TTSOptions {
@@ -22,92 +18,118 @@ export interface TTSOptions {
 
 export interface TTSResult {
   audioBase64: string;
-  audioUrl: string;
   encoding: string;
   sampleRate: number;
 }
 
-/**
- * 文字转语音 - 短文本同步接口
- */
 export async function synthesizeSpeech(options: TTSOptions): Promise<TTSResult> {
-  const { text, voiceType, speed = 1.0, volume = 1.0, pitch = 1.0, encoding = "mp3" } = options;
+  const { text, voiceType, encoding = "mp3" } = options;
 
-  // 新版控制台：X-Api-Key
-  // 旧版控制台：X-Api-App-Id + X-Api-Access-Key
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "X-Api-Request-Id": crypto.randomUUID(),
-    "X-Api-Resource-Id": VOLC_TTS_RESOURCE_ID,
-  };
-
-  if (useNewAuth) {
-    headers["X-Api-Key"] = VOLC_API_KEY!;
-  } else {
-    if (!VOLC_TTS_APP_ID || !VOLC_TTS_ACCESS_TOKEN) {
-      throw new Error("请配置 VOLC_API_KEY 或 VOLC_TTS_APP_ID + VOLC_TTS_ACCESS_TOKEN");
-    }
-    headers["X-Api-App-Id"] = VOLC_TTS_APP_ID;
-    headers["X-Api-Access-Key"] = VOLC_TTS_ACCESS_TOKEN;
+  if (!VOLC_API_KEY) {
+    throw new Error("请配置 VOLC_API_KEY");
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Connection": "keep-alive",
+    "X-Api-Key": VOLC_API_KEY,
+    "X-Api-Request-Id": crypto.randomUUID(),
+    "X-Api-Resource-Id": VOLC_TTS_RESOURCE_ID,
+    "X-Control-Require-Usage-Tokens-Return": "*",
+  };
+
   const body = {
-    app: {
-      appid: VOLC_TTS_APP_ID || "",
-      token: VOLC_TTS_ACCESS_TOKEN || "",
-      cluster: VOLC_TTS_CLUSTER,
-    },
-    user: {
-      uid: "hello-tts-user",
-    },
-    audio: {
-      voice_type: voiceType,
-      encoding,
-      speed_ratio: speed,
-      volume_ratio: volume,
-      pitch_ratio: pitch,
-    },
-    request: {
-      reqid: crypto.randomUUID(),
+    req_params: {
       text,
-      text_type: "plain",
-      operation: "query",
+      speaker: voiceType,
+      audio_params: {
+        format: encoding,
+        sample_rate: 24000,
+      },
     },
   };
 
-  const response = await fetch("https://openspeech.bytedance.com/api/v1/tts", {
+  const response = await fetch(VOLC_TTS_HTTP_URL, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
   });
 
+  const logId = response.headers.get("X-Tt-Logid") || response.headers.get("x-tt-logid") || "";
+
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`TTS 请求失败: ${response.status} ${errorText}`);
+    throw new Error(`TTS 请求失败: ${response.status}${logId ? ` logid=${logId}` : ""} ${errorText}`);
   }
 
-  const data = (await response.json()) as {
-    data?: string;
-    audio?: {
-      encoding?: string;
-      sample_rate?: number;
-    };
-  };
+  const audioBase64 = await readTTSAudioBase64(response, logId);
 
-  if (!data.data) {
+  if (!audioBase64) {
     throw new Error("TTS 返回数据异常，无音频内容");
   }
 
-  const audioBuffer = Buffer.from(data.data, "base64");
-  const blob = new Blob([audioBuffer], { type: `audio/${encoding === "ogg_opus" ? "ogg" : encoding}` });
-  const audioUrl = URL.createObjectURL(blob);
-
   return {
-    audioBase64: data.data,
-    audioUrl,
-    encoding: data.audio?.encoding || encoding,
-    sampleRate: data.audio?.sample_rate || 24000,
+    audioBase64,
+    encoding,
+    sampleRate: 24000,
   };
+}
+
+async function readTTSAudioBase64(response: Response, logId: string): Promise<string> {
+  if (!response.body) {
+    return parseTTSRecords(await response.text(), logId);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let pending = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    pending += decoder.decode(value, { stream: !done });
+    const lines = pending.split(/\r?\n/);
+    pending = lines.pop() || "";
+
+    for (const line of lines) {
+      const data = parseTTSRecord(line, logId);
+      if (data.done) return chunks.join("");
+      if (data.audioBase64) chunks.push(data.audioBase64);
+    }
+
+    if (done) break;
+  }
+
+  if (pending.trim()) {
+    const data = parseTTSRecord(pending, logId);
+    if (data.audioBase64) chunks.push(data.audioBase64);
+  }
+
+  return chunks.join("");
+}
+
+function parseTTSRecords(text: string, logId: string): string {
+  const chunks: string[] = [];
+  const records = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+
+  for (const record of records.length ? records : [text.trim()].filter(Boolean)) {
+    const data = parseTTSRecord(record, logId);
+    if (data.done) break;
+    if (data.audioBase64) chunks.push(data.audioBase64);
+  }
+
+  return chunks.join("");
+}
+
+function parseTTSRecord(record: string, logId: string): { audioBase64?: string; done?: boolean } {
+  const data = JSON.parse(record) as { code?: number; data?: string; message?: string };
+  if (data.code === 20000000) return { done: true };
+  if (data.code === 0 && data.data) return { audioBase64: data.data };
+  if (data.code && data.code > 0) {
+    throw new Error(`TTS 返回错误: ${data.code}${logId ? ` logid=${logId}` : ""} ${data.message || ""}`);
+  }
+  if (data.data) return { audioBase64: data.data };
+  return {};
 }
 
 export interface ASROptions {

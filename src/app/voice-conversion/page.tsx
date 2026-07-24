@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { Upload, Wand2, FileAudio } from "lucide-react";
+import { useState } from "react";
+import { Wand2, FileAudio } from "lucide-react";
 import { convertVoice } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Select, Label, Textarea } from "@/components/ui/input";
@@ -26,7 +26,6 @@ export default function VoiceConversionPage() {
   const [audioSrc, setAudioSrc] = useState<string>();
   const [error, setError] = useState<string>();
   const [isLoading, setIsLoading] = useState(false);
-  const [isPending, startTransition] = useTransition();
 
   const processSourceAudio = async (file: File) => {
     if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
@@ -50,48 +49,46 @@ export default function VoiceConversionPage() {
     setError(undefined);
     setIsLoading(true);
 
-    startTransition(async () => {
-      try {
-        let audioFile = sourceFile;
-        if (sourceFile.type.includes("webm")) {
-          try {
-            const wavBlob = await convertToWav(sourceFile);
-            audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
-          } catch {
-            // ignore
-          }
+    try {
+      let audioFile = sourceFile;
+      if (sourceFile.type.includes("webm")) {
+        try {
+          const wavBlob = await convertToWav(sourceFile);
+          audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
+        } catch {
+          // ignore
         }
-
-        const base64 = await fileToBase64(audioFile);
-        const format = audioFile.type.includes("mp3")
-          ? "mp3"
-          : audioFile.type.includes("ogg")
-          ? "ogg"
-          : "wav";
-
-        const result = await convertVoice({
-          audioBase64: base64,
-          format,
-          voiceType,
-          speed,
-          volume,
-          pitch,
-        });
-
-        if (result.success && result.audioBase64) {
-          setRecognizedText(result.text || "");
-          const buffer = base64ToArrayBuffer(result.audioBase64);
-          const blob = new Blob([buffer], { type: "audio/mp3" });
-          setAudioSrc(URL.createObjectURL(blob));
-        } else {
-          setError(result.error || "换声失败");
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "处理失败");
-      } finally {
-        setIsLoading(false);
       }
-    });
+
+      const base64 = await fileToBase64(audioFile);
+      const format = audioFile.type.includes("mp3")
+        ? "mp3"
+        : audioFile.type.includes("ogg")
+        ? "ogg"
+        : "wav";
+
+      const result = await convertVoice({
+        audioBase64: base64,
+        format,
+        voiceType,
+        speed,
+        volume,
+        pitch,
+      });
+
+      if (result.success && result.audioBase64) {
+        setRecognizedText(result.text || "");
+        const buffer = base64ToArrayBuffer(result.audioBase64);
+        const blob = new Blob([buffer], { type: "audio/mp3" });
+        setAudioSrc(URL.createObjectURL(blob));
+      } else {
+        setError(result.error || "换声失败");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "处理失败");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -118,7 +115,7 @@ export default function VoiceConversionPage() {
                 accept="audio/*"
                 onChange={handleFileUpload}
                 className="hidden"
-                disabled={isLoading || isPending}
+                disabled={isLoading}
               />
             </label>
             <div className="flex flex-1 items-center justify-center rounded-lg border border-border bg-card p-4">
@@ -204,14 +201,14 @@ export default function VoiceConversionPage() {
       <Button
         size="lg"
         onClick={handleConvert}
-        disabled={!sourceFile || isLoading || isPending}
+        disabled={!sourceFile || isLoading}
         className="w-full gap-2"
       >
         <Wand2 className="h-5 w-5" />
-        {isLoading || isPending ? "处理中..." : "开始换声"}
+        {isLoading ? "处理中..." : "开始换声"}
       </Button>
 
-      <AudioPlayer src={audioSrc} isLoading={isLoading || isPending} fileName="converted-voice.mp3" />
+      <AudioPlayer src={audioSrc} isLoading={isLoading} fileName="converted-voice.mp3" />
     </div>
   );
 }

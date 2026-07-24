@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload, Copy, Volume2, Sparkles, FileAudio } from "lucide-react";
+import { Copy, Volume2, Sparkles, FileAudio } from "lucide-react";
 import { speechToText } from "@/app/actions";
 import { polishText } from "@/app/actions-llm";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,6 @@ export default function ASRPage() {
   const [text, setText] = useState("");
   const [error, setError] = useState<string>();
   const [isLoading, setIsLoading] = useState(false);
-  const [isPending, startTransition] = useTransition();
   const [fileName, setFileName] = useState<string>();
   const router = useRouter();
   const { config, hasConfig } = useLLMConfig();
@@ -36,39 +35,37 @@ export default function ASRPage() {
     setIsLoading(true);
     setFileName(file.name);
 
-    startTransition(async () => {
-      try {
-        let audioFile = file;
-        // 录音格式是 webm，转成 wav 以提升识别兼容性
-        if (file.type.includes("webm")) {
-          try {
-            const wavBlob = await convertToWav(file);
-            audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
-          } catch {
-            // 转换失败则尝试直接用原文件
-          }
+    try {
+      let audioFile = file;
+      // 录音格式是 webm，转成 wav 以提升识别兼容性
+      if (file.type.includes("webm")) {
+        try {
+          const wavBlob = await convertToWav(file);
+          audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
+        } catch {
+          // 转换失败则尝试直接用原文件
         }
-
-        const base64 = await fileToBase64(audioFile);
-        const format = audioFile.type.includes("mp3")
-          ? "mp3"
-          : audioFile.type.includes("ogg")
-          ? "ogg"
-          : "wav";
-
-        const result = await speechToText({ audioBase64: base64, format });
-
-        if (result.success && result.text !== undefined) {
-          setText(result.text);
-        } else {
-          setError(result.error || "识别失败");
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "处理失败");
-      } finally {
-        setIsLoading(false);
       }
-    });
+
+      const base64 = await fileToBase64(audioFile);
+      const format = audioFile.type.includes("mp3")
+        ? "mp3"
+        : audioFile.type.includes("ogg")
+        ? "ogg"
+        : "wav";
+
+      const result = await speechToText({ audioBase64: base64, format });
+
+      if (result.success && result.text !== undefined) {
+        setText(result.text);
+      } else {
+        setError(result.error || "识别失败");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "处理失败");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,18 +84,18 @@ export default function ASRPage() {
     setError(undefined);
     setIsLoading(true);
 
-    startTransition(async () => {
-      try {
-        const result = await polishText({ text: text.trim(), config });
-        if (result.success && result.polishedText) {
-          setText(result.polishedText);
-        } else {
-          setError(result.error || "润色失败");
-        }
-      } finally {
-        setIsLoading(false);
+    try {
+      const result = await polishText({ text: text.trim(), config });
+      if (result.success && result.polishedText) {
+        setText(result.polishedText);
+      } else {
+        setError(result.error || "润色失败");
       }
-    });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "润色失败");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSendToTTS = () => {
@@ -131,7 +128,7 @@ export default function ASRPage() {
                 accept="audio/*"
                 onChange={handleFileUpload}
                 className="hidden"
-                disabled={isLoading || isPending}
+                disabled={isLoading}
               />
             </label>
             <div className="flex flex-1 items-center justify-center rounded-lg border border-border bg-card p-4">
@@ -155,7 +152,7 @@ export default function ASRPage() {
               onChange={(e) => setText(e.target.value)}
               placeholder="识别结果将显示在这里..."
               rows={8}
-              disabled={isLoading || isPending}
+              disabled={isLoading}
             />
             {isLoading && (
               <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/80">
@@ -173,7 +170,7 @@ export default function ASRPage() {
               variant="outline"
               size="sm"
               onClick={handlePolish}
-              disabled={!hasConfig || !text.trim() || isLoading || isPending}
+              disabled={!hasConfig || !text.trim() || isLoading}
               className="gap-1.5"
             >
               <Sparkles className="h-4 w-4" />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Wand2, Sparkles } from "lucide-react";
 import { textToSpeech } from "@/app/actions";
 import { polishText } from "@/app/actions-llm";
@@ -25,7 +25,6 @@ export default function TTSPage() {
   const [audioSrc, setAudioSrc] = useState<string>();
   const [error, setError] = useState<string>();
   const [isLoading, setIsLoading] = useState(false);
-  const [isPending, startTransition] = useTransition();
   const { config, hasConfig } = useLLMConfig();
 
   const handleGenerate = async () => {
@@ -34,28 +33,28 @@ export default function TTSPage() {
     setAudioSrc(undefined);
     setIsLoading(true);
 
-    startTransition(async () => {
-      try {
-        const result = await textToSpeech({
-          text: text.trim(),
-          voiceType,
-          speed,
-          volume,
-          pitch,
-          encoding: "mp3",
-        });
+    try {
+      const result = await textToSpeech({
+        text: text.trim(),
+        voiceType,
+        speed,
+        volume,
+        pitch,
+        encoding: "mp3",
+      });
 
-        if (result.success && result.audioBase64) {
-          const buffer = base64ToArrayBuffer(result.audioBase64);
-          const blob = new Blob([buffer], { type: "audio/mp3" });
-          setAudioSrc(URL.createObjectURL(blob));
-        } else {
-          setError(result.error || "生成失败");
-        }
-      } finally {
-        setIsLoading(false);
+      if (result.success && result.audioBase64) {
+        const buffer = base64ToArrayBuffer(result.audioBase64);
+        const blob = new Blob([buffer], { type: "audio/mp3" });
+        setAudioSrc(URL.createObjectURL(blob));
+      } else {
+        setError(result.error || "生成失败");
       }
-    });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成失败");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handlePolish = async () => {
@@ -63,18 +62,18 @@ export default function TTSPage() {
     setError(undefined);
     setIsLoading(true);
 
-    startTransition(async () => {
-      try {
-        const result = await polishText({ text: text.trim(), config });
-        if (result.success && result.polishedText) {
-          setText(result.polishedText);
-        } else {
-          setError(result.error || "润色失败");
-        }
-      } finally {
-        setIsLoading(false);
+    try {
+      const result = await polishText({ text: text.trim(), config });
+      if (result.success && result.polishedText) {
+        setText(result.polishedText);
+      } else {
+        setError(result.error || "润色失败");
       }
-    });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "润色失败");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const currentLength = new Blob([text]).size;
@@ -190,14 +189,14 @@ export default function TTSPage() {
       <Button
         size="lg"
         onClick={handleGenerate}
-        disabled={!text.trim() || isOverLimit || isLoading || isPending}
+        disabled={!text.trim() || isOverLimit || isLoading}
         className="w-full gap-2"
       >
         <Wand2 className="h-5 w-5" />
-        {isLoading || isPending ? "生成中..." : "生成语音"}
+        {isLoading ? "生成中..." : "生成语音"}
       </Button>
 
-      <AudioPlayer src={audioSrc} isLoading={isLoading || isPending} fileName="tts-output.mp3" />
+      <AudioPlayer src={audioSrc} isLoading={isLoading} fileName="tts-output.mp3" />
     </div>
   );
 }

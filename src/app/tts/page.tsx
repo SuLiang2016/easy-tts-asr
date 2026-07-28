@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { Wand2, Sparkles, Clock, Mic2, X, Trash2 } from "lucide-react";
+import { useState, useRef } from "react";
+import { Wand2, Sparkles, Clock, Mic2, X, Trash2, Play, Pause, Download, RotateCcw } from "lucide-react";
 import { textToSpeech } from "@/app/actions";
 import { polishText } from "@/app/actions-llm";
 import { Button } from "@/components/ui/button";
 import { Textarea, Select, Label } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
-import { AudioPlayer } from "@/components/ui/audio-player";
+import { AudioPlayer, AudioPlayerHandle } from "@/components/ui/audio-player";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { VOICES, FEATURED_VOICES, FUN_VOICES } from "@/lib/voices";
@@ -46,6 +46,13 @@ const formatSize = (bytes: number) => {
 
 const getVoiceName = (id: string) => VOICES.find((v) => v.id === id)?.name ?? id;
 
+const buildDownloadName = (g: Generation) => {
+  const voice = getVoiceName(g.voiceType);
+  const d = new Date(g.createdAt);
+  const hhmm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).replace(":", "");
+  return `tts-${voice}-${hhmm}.mp3`;
+};
+
 export default function TTSPage() {
   const [text, setText] = useState("");
   const [voiceType, setVoiceType] = useState(VOICES[0].id);
@@ -59,8 +66,12 @@ export default function TTSPage() {
   const [generations, setGenerations] = useState<Generation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loadedText, setLoadedText] = useState("");
+  const [playingId, setPlayingId] = useState<string | null>(null);
 
   const { config, hasConfig } = useLLMConfig();
+
+  const mainPlayerRef = useRef<AudioPlayerHandle>(null);
+  const inlineAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const dirty = text !== loadedText;
   const totalSize = generations.reduce((sum, g) => sum + g.audioSize, 0);
@@ -131,6 +142,11 @@ export default function TTSPage() {
   const loadGeneration = (gen: Generation) => {
     if (gen.id === activeId) return;
     if (dirty && !window.confirm("当前文本未保存，切换将丢失，是否继续？")) return;
+    // 加载到主播放器前，暂停就地播放（联动）
+    if (inlineAudioRef.current) {
+      inlineAudioRef.current.pause();
+    }
+    setPlayingId(null);
     setText(gen.text);
     setVoiceType(gen.voiceType);
     setSpeed(gen.speed);
@@ -139,6 +155,33 @@ export default function TTSPage() {
     setAudioSrc(gen.audioBlobUrl);
     setLoadedText(gen.text);
     setActiveId(gen.id);
+  };
+
+  const toggleInlinePlay = (g: Generation) => {
+    const audio = inlineAudioRef.current;
+    if (!audio) return;
+    if (playingId === g.id) {
+      // 再次点击同一条 -> 暂停
+      audio.pause();
+      setPlayingId(null);
+      return;
+    }
+    // 切换到新条目前，暂停主播放器（联动，避免并发）
+    mainPlayerRef.current?.pause();
+    audio.src = g.audioBlobUrl;
+    audio.play().catch(() => {
+      // 自动播放被拒等异常，静默
+    });
+    setPlayingId(g.id);
+  };
+
+  const handleDownload = (g: Generation) => {
+    const link = document.createElement("a");
+    link.href = g.audioBlobUrl;
+    link.download = buildDownloadName(g);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const deleteGeneration = (id: string) => {
@@ -150,15 +193,28 @@ export default function TTSPage() {
       setAudioSrc(undefined);
       setLoadedText("");
     }
+    if (playingId === id) {
+      if (inlineAudioRef.current) inlineAudioRef.current.pause();
+      setPlayingId(null);
+    }
   };
 
   const clearAll = () => {
     if (generations.length === 0) return;
     generations.forEach((g) => URL.revokeObjectURL(g.audioBlobUrl));
+    if (inlineAudioRef.current) inlineAudioRef.current.pause();
     setGenerations([]);
     setActiveId(null);
     setAudioSrc(undefined);
+    setPlayingId(null);
     // 不动 Textarea 文本：清空音频历史与文本输入无关
+  };
+
+  // 主播放器开始播放 -> 暂停就地播放（联动，避免并发）
+  const handleMainPlayChange = (playing: boolean) => {
+    if (!playing) return;
+    if (inlineAudioRef.current) inlineAudioRef.current.pause();
+    setPlayingId(null);
   };
 
   const currentLength = new Blob([text]).size;
@@ -168,7 +224,7 @@ export default function TTSPage() {
     <div className="mx-auto max-w-3xl space-y-6">
       <div className="space-y-1">
         <h1 className="text-2xl font-bold">文字转语音</h1>
-        <p className="text-muted-foreground">输入文字，选择音色，一键生成语音。多次生成累积为历史，点击任意条目回填并播放。</p>
+        <p className="text-muted-foreground">输入文字，选择音色，一键生成语音。历史项支持就地播放与下载。</p>
       </div>
 
       <Card>
@@ -286,7 +342,13 @@ export default function TTSPage() {
         {isLoading ? "生成中..." : "生成语音"}
       </Button>
 
-      <AudioPlayer src={audioSrc} isLoading={isLoading} fileName="tts-output.mp3" />
+      <AudioPlayer
+        ref={mainPlayerRef}
+        src={audioSrc}
+        isLoading={isLoading}
+        fileName="tts-output.mp3"
+        onPlayChange={handleMainPlayChange}
+      />
 
       <Card>
         <CardHeader>
@@ -327,51 +389,81 @@ export default function TTSPage() {
                 尚无生成记录，点击上方「生成语音」开始
               </p>
             ) : (
-              generations.map((g) => (
-                <div
-                  key={g.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => loadGeneration(g)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      loadGeneration(g);
-                    }
-                  }}
-                  className={cn(
-                    "group relative w-full cursor-pointer rounded-md border p-3 transition-colors",
-                    activeId === g.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:bg-muted/50"
-                  )}
-                >
-                  <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3 shrink-0" />
-                    <span className="shrink-0">{formatTime(g.createdAt)}</span>
-                    <Mic2 className="h-3 w-3 shrink-0" />
-                    <span className="shrink-0 truncate">{getVoiceName(g.voiceType)}</span>
-                    <span className="shrink-0">· {formatSize(g.audioSize)}</span>
-                  </div>
-                  <p className="line-clamp-2 text-sm">{g.text || "（无文本）"}</p>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteGeneration(g.id);
-                    }}
-                    disabled={isLoading}
-                    aria-label="删除该条"
-                    className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100"
+              generations.map((g) => {
+                const isPlaying = playingId === g.id;
+                return (
+                  <div
+                    key={g.id}
+                    className={cn(
+                      "rounded-md border p-3 transition-colors",
+                      activeId === g.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/50"
+                    )}
                   >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))
+                    <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3 shrink-0" />
+                      <span className="shrink-0">{formatTime(g.createdAt)}</span>
+                      <Mic2 className="h-3 w-3 shrink-0" />
+                      <span className="shrink-0 truncate">{getVoiceName(g.voiceType)}</span>
+                      <span className="shrink-0">· {formatSize(g.audioSize)}</span>
+                    </div>
+                    <p className="line-clamp-2 text-sm">{g.text || "（无文本）"}</p>
+                    <div className="mt-2 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleInlinePlay(g)}
+                        disabled={isLoading}
+                        aria-label={isPlaying ? "暂停" : "播放"}
+                        title={isPlaying ? "暂停" : "播放"}
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded transition-colors hover:bg-muted disabled:opacity-50",
+                          isPlaying ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownload(g)}
+                        disabled={isLoading}
+                        aria-label="下载语音"
+                        title="下载语音"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => loadGeneration(g)}
+                        disabled={isLoading}
+                        aria-label="加载到表单"
+                        title="加载到表单并送入播放器"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteGeneration(g.id)}
+                        disabled={isLoading}
+                        aria-label="删除该条"
+                        title="删除该条"
+                        className="ml-auto flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </CardContent>
       </Card>
+
+      {/* 就地播放共享音频元素：项项互斥，单一实例即可 */}
+      <audio ref={inlineAudioRef} onEnded={() => setPlayingId(null)} className="hidden" />
     </div>
   );
 }

@@ -24,6 +24,13 @@ export interface TTSActionResult {
  */
 export async function textToSpeech(input: TTSActionInput): Promise<TTSActionResult> {
   try {
+    if (input.text.length > 1000) {
+      return {
+        success: false,
+        error: "文本超过 1000 字符上限",
+      };
+    }
+
     const options: TTSOptions = {
       text: input.text,
       voiceType: input.voiceType,

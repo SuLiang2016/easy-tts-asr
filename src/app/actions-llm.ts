@@ -46,7 +46,7 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
           {
             role: "system",
             content:
-              "你是一位文字润色助手。请对用户提供的文字进行润色，使其更自然、流畅、适合朗读。保持原意不变，不要过度发挥。直接返回润色后的文字，不要添加解释。",
+              "你是一位文字润色助手。请对用户提供的文字进行润色，使其更自然、流畅、适合朗读。保持原意不变，不要过度发挥。直接返回润色后的文字，不要添加解释。润色后的文字请控制在 1000 字符以内。",
           },
           {
             role: "user",

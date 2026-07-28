@@ -15,7 +15,7 @@ import { useLLMConfig } from "@/lib/use-llm-config";
 import { base64ToArrayBuffer } from "@/lib/audio";
 import { cn } from "@/lib/utils";
 
-const MAX_TEXT_LENGTH = 250; // 约 1024 字节的 80%
+const MAX_TEXT_LENGTH = 1000; // 字符数上限
 const MEMORY_WARN_THRESHOLD = 10 * 1024 * 1024; // 10MB 软警告
 
 type Generation = {
@@ -217,7 +217,7 @@ export default function TTSPage() {
     setPlayingId(null);
   };
 
-  const currentLength = new Blob([text]).size;
+  const currentLength = text.length;
   const isOverLimit = currentLength > MAX_TEXT_LENGTH;
 
   return (
@@ -231,7 +231,7 @@ export default function TTSPage() {
         <CardHeader>
           <CardTitle>文本内容</CardTitle>
           <CardDescription>
-            建议控制在 {MAX_TEXT_LENGTH} 字节以内（当前 {currentLength} 字节）
+            建议控制在 {MAX_TEXT_LENGTH} 字符以内（当前 {currentLength} 字符）
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -240,7 +240,7 @@ export default function TTSPage() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder="请输入要合成的文字..."
-              rows={6}
+              rows={10}
               className={isOverLimit ? "border-destructive" : ""}
             />
             <div className="absolute bottom-2 right-2 text-xs text-muted-foreground">

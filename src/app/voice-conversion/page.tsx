@@ -14,7 +14,7 @@ import { fileToBase64, convertToWav, base64ToArrayBuffer } from "@/lib/audio";
 import { VOICES, FEATURED_VOICES, FUN_VOICES } from "@/lib/voices";
 
 const MAX_FILE_SIZE_MB = 20;
-const MAX_DURATION_SECONDS = 30; // 换声限制 30 秒，适配短文本 TTS
+const MAX_DURATION_SECONDS = 60; // 换声限制 60 秒
 
 export default function VoiceConversionPage() {
   const [sourceFile, setSourceFile] = useState<File | null>(null);

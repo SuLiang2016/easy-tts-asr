@@ -26,8 +26,8 @@ src/
 │   ├── globals.css        # 全局样式（CSS 变量定义主题）
 │   ├── actions.ts         # TTS/ASR/换声 Server Actions
 │   ├── actions-llm.ts     # AI 润色 Server Action
-│   ├── tts/page.tsx       # 文字转语音
-│   ├── asr/page.tsx       # 语音转文字
+│   ├── tts/page.tsx       # 文字转语音（含生成历史）
+│   ├── asr/page.tsx       # 语音转文字（含识别历史）
 │   ├── voice-conversion/  # 换声
 │   └── settings/          # 大模型配置
 ├── components/
@@ -62,10 +62,12 @@ src/
 3. 音频 base64 传输，避免服务器存储开销
 4. no `useTransition` + `startTransition` = 直接 async/await 调用 Server Action（避免 HMR 中断请求）
 5. 无用户体系，配置存在浏览器 localStorage
+6. TTS/ASR 历史仅存组件内存（刷新即失）；TTS 音频用 `URL.createObjectURL` 生成 blob URL，删除/清空时须 `URL.revokeObjectURL` 释放
 
 ## 重要说明
 - `Buffer` 在浏览器端不可用，使用 `base64ToArrayBuffer()` 替代
 - Next.js 16 中 `serverActions` 配置在 `experimental` 字段下
 - `SliderHTMLAttributes` 不包含 min/max/step，改用 `InputHTMLAttributes`
 - 项目使用 Tailwind CSS v4（`@import "tailwindcss"` 语法，通过 `@variant dark` 实现深色模式）
+- 终端为 PowerShell 5，**不支持 bash heredoc 语法**（`<<'EOF'`），多行 git commit 消息请使用多个 `-m` 参数拼接
 <!-- END:project-info -->

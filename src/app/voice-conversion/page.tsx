@@ -51,19 +51,21 @@ export default function VoiceConversionPage() {
 
     try {
       let audioFile = sourceFile;
-      if (sourceFile.type.includes("webm")) {
+      if (!sourceFile.type.includes("wav")) {
         try {
           const wavBlob = await convertToWav(sourceFile);
           audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
         } catch {
-          // ignore
+          throw new Error("音频格式转换失败，请尝试上传 wav 文件");
         }
       }
 
       const base64 = await fileToBase64(audioFile);
-      const format = audioFile.type.includes("mp3")
+      // mp3 的 MIME 可能是 audio/mp3 或 audio/mpeg，都需识别为 mp3
+      const lowerName = audioFile.name.toLowerCase();
+      const format = (audioFile.type.includes("mp3") || audioFile.type.includes("mpeg") || lowerName.endsWith(".mp3"))
         ? "mp3"
-        : audioFile.type.includes("ogg")
+        : (audioFile.type.includes("ogg") || lowerName.endsWith(".ogg"))
         ? "ogg"
         : "wav";
 

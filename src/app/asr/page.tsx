@@ -58,20 +58,21 @@ export default function ASRPage() {
 
     try {
       let audioFile = file;
-      // 录音格式是 webm，转成 wav 以提升识别兼容性
-      if (file.type.includes("webm")) {
+      if (!file.type.includes("wav")) {
         try {
           const wavBlob = await convertToWav(file);
           audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
         } catch {
-          // 转换失败则尝试直接用原文件
+          throw new Error("音频格式转换失败，请尝试上传 wav 文件");
         }
       }
 
       const base64 = await fileToBase64(audioFile);
-      const format = audioFile.type.includes("mp3")
+      // mp3 的 MIME 可能是 audio/mp3 或 audio/mpeg，都需识别为 mp3
+      const lowerName = audioFile.name.toLowerCase();
+      const format = (audioFile.type.includes("mp3") || audioFile.type.includes("mpeg") || lowerName.endsWith(".mp3"))
         ? "mp3"
-        : audioFile.type.includes("ogg")
+        : (audioFile.type.includes("ogg") || lowerName.endsWith(".ogg"))
         ? "ogg"
         : "wav";
 

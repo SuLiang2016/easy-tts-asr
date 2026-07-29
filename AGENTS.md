@@ -45,7 +45,7 @@ src/
 
 ## 核心功能约束
 - **TTS**: HTTP 单向流式接口，上限 1000 字符
-- **ASR**: 极速版识别接口，音频上限 5 分钟 / 20MB
+- **ASR**: WebSocket 单流接口（bigmodel_nostream），Agent Plan 端点，音频上限 5 分钟 / 20MB
 - **换声**: 服务端串行 ASR->TTS，音频上限 60 秒
 - **录音**: MediaRecorder API，WebM 格式，自动转 WAV 发送
 - **AI 润色**: OpenAI 兼容接口，用户自配 Key/URL/模型/温度，存 localStorage

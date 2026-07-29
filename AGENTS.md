@@ -19,6 +19,7 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 ## 项目结构
 ```
+build.js              # 打包脚本：合并 standalone+static+public+.env.local 到 dist/
 src/
 ├── app/              # 页面（5个）+ Server Actions
 │   ├── page.tsx           # 首页（欢迎语 + 功能卡片）
@@ -63,6 +64,17 @@ src/
 4. no `useTransition` + `startTransition` = 直接 async/await 调用 Server Action（避免 HMR 中断请求）
 5. 无用户体系，配置存在浏览器 localStorage
 6. TTS/ASR 历史仅存组件内存（刷新即失）；TTS 音频用 `URL.createObjectURL` 生成 blob URL，删除/清空时须 `URL.revokeObjectURL` 释放
+7. 打包部署用 `output: "standalone"`；`build.js` 合并产物到 `dist/` 并生成 `start.js`，详见下方「打包与部署」
+
+## 打包与部署
+- **打包**: `npm run pack` = lint + `next build` + `node build.js`（跨平台 Node 脚本，Windows 打包/Linux 服务器跑都行）
+- **启动**: `npm start` -> `node dist/start.js`（`start.js` 用 `process.loadEnvFile` 加载 `dist/.env.local`，找不到则回退系统环境变量）
+- **dist/ 结构**: `server.js` + `.next/`(server+static) + `public/` + `node_modules/`(standalone 追踪的最小依赖) + `.env.local` + `start.js`
+- **可移植**: `dist/` 整体打包上传服务器，`cd dist && node start.js` 即可（服务器只需 Node，无需 `npm install`、无需源码）
+- **环境变量优先级**: 系统 env > `dist/.env.local`（PM2/systemd 注入的 Key 覆盖包内默认；包内 `.env.local` 作兜底）
+- **standalone 坑**: `.next/standalone` 不含 `.next/static` 和 `public/`，须手动合并（`build.js` 已处理）
+- **ws 依赖**: 运行时走 Next 内置 `next/dist/compiled/ws` 别名，`package.json` 里的 `ws` 实际冗余但无害
+- **dist/ 已 gitignore**（含真实 VOLC_API_KEY，勿提交、勿分享）
 
 ## 重要说明
 - `Buffer` 在浏览器端不可用，使用 `base64ToArrayBuffer()` 替代

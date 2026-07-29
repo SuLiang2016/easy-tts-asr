@@ -4,8 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "npm run lint",
     "build": "next build",
-    "start": "next start",
+    "pack": "npm run build && node build.js",
+    "start": "node dist/start.js",
     "lint": "eslint"
   },
   "dependencies": {

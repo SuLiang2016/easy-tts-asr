@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
 const STORAGE_KEY = "hello-tts-theme";
+const THEME_CHANGE_EVENT = "hello-tts-theme-change";
 
 function getStoredTheme(): Theme | null {
   if (typeof window === "undefined") return null;
@@ -27,20 +28,40 @@ function applyTheme(theme: Theme) {
   }
 }
 
+function getThemeSnapshot(): Theme {
+  return getStoredTheme() || getSystemTheme();
+}
+
+function getServerThemeSnapshot(): Theme {
+  return "light";
+}
+
+function subscribeTheme(onChange: () => void) {
+  const handleChange = () => {
+    applyTheme(getThemeSnapshot());
+    onChange();
+  };
+  const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+  window.addEventListener("storage", handleChange);
+  window.addEventListener(THEME_CHANGE_EVENT, handleChange);
+  mediaQuery.addEventListener("change", handleChange);
+
+  return () => {
+    window.removeEventListener("storage", handleChange);
+    window.removeEventListener(THEME_CHANGE_EVENT, handleChange);
+    mediaQuery.removeEventListener("change", handleChange);
+  };
+}
+
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === "undefined") return "light";
-    const stored = getStoredTheme();
-    const initial = stored || getSystemTheme();
-    applyTheme(initial);
-    return initial;
-  });
+  const theme = useSyncExternalStore(subscribeTheme, getThemeSnapshot, getServerThemeSnapshot);
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
     applyTheme(next);
     localStorage.setItem(STORAGE_KEY, next);
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
   };
 
   return { theme, toggleTheme, mounted: true };

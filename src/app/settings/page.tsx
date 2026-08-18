@@ -5,18 +5,62 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
-import { useLLMConfig } from "@/lib/use-llm-config";
-import { useState } from "react";
+import { LLMConfig, useLLMConfig } from "@/lib/use-llm-config";
+import { useEffect, useRef, useState } from "react";
 
 export default function SettingsPage() {
   const { config, saveConfig, hasConfig } = useLLMConfig();
-  const [form, setForm] = useState(config);
   const [saved, setSaved] = useState(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showSaved = () => {
+    setSaved(true);
+
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+    }
+
+    savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <SettingsForm
+      key={JSON.stringify(config)}
+      config={config}
+      hasConfig={hasConfig}
+      saveConfig={saveConfig}
+      saved={saved}
+      onSaved={showSaved}
+    />
+  );
+}
+
+function SettingsForm({
+  config,
+  hasConfig,
+  saveConfig,
+  saved,
+  onSaved,
+}: {
+  config: LLMConfig;
+  hasConfig: boolean;
+  saveConfig: (newConfig: LLMConfig) => void;
+  saved: boolean;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState(config);
 
   const handleSave = () => {
     saveConfig(form);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    onSaved();
   };
 
   return (

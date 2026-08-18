@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Mic, Square, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -16,6 +16,7 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const stopRecording = useCallback(() => {
     if (timerRef.current) {
@@ -24,6 +25,9 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
     }
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
+    } else if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     }
     setIsRecording(false);
   }, []);
@@ -31,6 +35,7 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
@@ -47,6 +52,7 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
         setRecordedFile(file);
         onAudioReady(file);
         stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       };
 
       mediaRecorder.start();
@@ -70,6 +76,19 @@ export function AudioRecorder({ onAudioReady, maxDurationSeconds = 60 }: AudioRe
   const clearRecording = useCallback(() => {
     setRecordedFile(null);
     setDuration(0);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+      } else if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
   }, []);
 
   const formatDuration = (seconds: number) => {

@@ -18,6 +18,24 @@ export interface PolishResult {
   error?: string;
 }
 
+const MAX_POLISH_TEXT_LENGTH = 5000;
+const LLM_TIMEOUT_MS = 60_000;
+
+/**
+ * 校验并规范化 baseUrl：只允许 http/https（本地 Ollama 等自建服务走 http），
+ * 防止把 file:/ftp: 等奇怪协议交给服务端 fetch。
+ */
+function normalizeBaseUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (!url.hostname) return null;
+    return raw.replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Server Action: 使用用户配置的 OpenAI 兼容大模型润色文字
  * 所有配置由用户提供，服务端只负责转发
@@ -32,8 +50,23 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
         error: "大模型配置不完整，请先在设置页配置",
       };
     }
+    if (typeof text !== "string" || !text.trim()) {
+      return { success: false, error: "请输入要润色的文字" };
+    }
+    if (text.length > MAX_POLISH_TEXT_LENGTH) {
+      return { success: false, error: `文字超过 ${MAX_POLISH_TEXT_LENGTH} 字符上限` };
+    }
 
-    const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    const baseUrl = normalizeBaseUrl(config.baseUrl);
+    if (!baseUrl) {
+      return { success: false, error: "Base URL 无效，请填写 http(s):// 开头的完整地址" };
+    }
+
+    const temperature = Number.isFinite(config.temperature)
+      ? Math.min(2, Math.max(0, config.temperature))
+      : 0.7;
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -41,7 +74,7 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
       },
       body: JSON.stringify({
         model: config.model,
-        temperature: config.temperature,
+        temperature,
         messages: [
           {
             role: "system",
@@ -54,11 +87,12 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
           },
         ],
       }),
+      signal: AbortSignal.timeout(LLM_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`大模型请求失败: ${response.status} ${errorText}`);
+      // 不透传上游错误体（可能是长 HTML），只保留状态码
+      throw new Error(`大模型请求失败（HTTP ${response.status}）`);
     }
 
     const data = (await response.json()) as {
@@ -81,9 +115,15 @@ export async function polishText(input: PolishInput): Promise<PolishResult> {
       polishedText,
     };
   } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      return { success: false, error: "大模型响应超时，请稍后再试" };
+    }
+    if (err instanceof TypeError) {
+      return { success: false, error: "无法连接到大模型服务，请检查 Base URL" };
+    }
     return {
       success: false,
-      error: err instanceof Error ? err.message : "未知错误",
+      error: err instanceof Error ? err.message : "润色失败，请稍后再试",
     };
   }
 }

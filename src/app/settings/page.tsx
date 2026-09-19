@@ -5,23 +5,42 @@ import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert } from "@/components/ui/alert";
-import { LLMConfig, useLLMConfig } from "@/lib/use-llm-config";
+import { useLLMConfig } from "@/lib/use-llm-config";
 import { useEffect, useRef, useState } from "react";
 
+/** 表单态：温度保持字符串，允许输入中间态（如 "0."），保存时再解析钳制 */
+interface SettingsFormState {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  temperature: string;
+}
+
+const clampTemperature = (value: number) => Math.min(2, Math.max(0, value));
+
+function toFormState(config: { apiKey: string; baseUrl: string; model: string; temperature: number }): SettingsFormState {
+  return {
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    temperature: String(config.temperature),
+  };
+}
+
 export default function SettingsPage() {
-  const { config, saveConfig, hasConfig } = useLLMConfig();
+  const { config, saveConfig, hasConfig, hydrated } = useLLMConfig();
   const [saved, setSaved] = useState(false);
+  const [formError, setFormError] = useState<string>();
+  const [form, setForm] = useState<SettingsFormState>(() => toFormState(config));
+  const [syncedFromStorage, setSyncedFromStorage] = useState(false);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showSaved = () => {
-    setSaved(true);
-
-    if (savedTimerRef.current) {
-      clearTimeout(savedTimerRef.current);
-    }
-
-    savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
-  };
+  // hydration 后从 localStorage 同步一次真实配置；之后的编辑只属于本页，
+  // 不会被跨标签页保存静默重置（渲染期条件同步是 React 官方推荐的 props->state 调整模式）
+  if (hydrated && !syncedFromStorage) {
+    setSyncedFromStorage(true);
+    setForm(toFormState(config));
+  }
 
   useEffect(() => {
     return () => {
@@ -31,36 +50,26 @@ export default function SettingsPage() {
     };
   }, []);
 
-  return (
-    <SettingsForm
-      key={JSON.stringify(config)}
-      config={config}
-      hasConfig={hasConfig}
-      saveConfig={saveConfig}
-      saved={saved}
-      onSaved={showSaved}
-    />
-  );
-}
-
-function SettingsForm({
-  config,
-  hasConfig,
-  saveConfig,
-  saved,
-  onSaved,
-}: {
-  config: LLMConfig;
-  hasConfig: boolean;
-  saveConfig: (newConfig: LLMConfig) => void;
-  saved: boolean;
-  onSaved: () => void;
-}) {
-  const [form, setForm] = useState(config);
-
   const handleSave = () => {
-    saveConfig(form);
-    onSaved();
+    const parsedTemperature = parseFloat(form.temperature);
+    if (Number.isNaN(parsedTemperature)) {
+      setFormError("温度必须是 0 ~ 2 之间的数字");
+      return;
+    }
+
+    setFormError(undefined);
+    saveConfig({
+      apiKey: form.apiKey,
+      baseUrl: form.baseUrl,
+      model: form.model,
+      temperature: clampTemperature(parsedTemperature),
+    });
+
+    setSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
   };
 
   return (
@@ -105,6 +114,7 @@ function SettingsForm({
               value={form.baseUrl}
               onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
             />
+            <p className="text-xs text-muted-foreground">支持任意 OpenAI 兼容服务（含本地 http://localhost 服务）</p>
           </div>
 
           <div className="space-y-2">
@@ -123,21 +133,19 @@ function SettingsForm({
           <div className="space-y-2">
             <Label htmlFor="temperature" className="flex items-center gap-2">
               <Thermometer className="h-4 w-4" />
-              温度（Temperature）
+              温度（Temperature，0 ~ 2）
             </Label>
             <Input
               id="temperature"
-              type="number"
-              min={0}
-              max={2}
-              step={0.1}
+              type="text"
+              inputMode="decimal"
+              placeholder="0.7"
               value={form.temperature}
-              onChange={(e) =>
-                setForm({ ...form, temperature: parseFloat(e.target.value) || 0 })
-              }
+              onChange={(e) => setForm({ ...form, temperature: e.target.value })}
             />
           </div>
 
+          {formError && <Alert variant="destructive">{formError}</Alert>}
           {saved && <Alert>配置已保存</Alert>}
 
           <Button onClick={handleSave} className="w-full gap-2">

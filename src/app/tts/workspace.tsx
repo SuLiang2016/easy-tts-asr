@@ -1,0 +1,420 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { Wand2, Sparkles, Clock, Mic2, X, Trash2, Play, Pause, Download, RotateCcw } from "lucide-react";
+import { textToSpeech } from "@/app/actions";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/input";
+import { AudioPlayer, AudioPlayerHandle } from "@/components/ui/audio-player";
+import { Alert } from "@/components/ui/alert";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { VoiceControls } from "@/components/voice-controls";
+import { useAudioHistory } from "@/hooks/use-audio-history";
+import { VOICES } from "@/lib/voices";
+import { useLLMConfig } from "@/lib/use-llm-config";
+import { applyPolish } from "@/lib/polish";
+import { base64ToArrayBuffer } from "@/lib/audio";
+import { formatSize, formatTime } from "@/lib/format";
+import { randomId } from "@/lib/random";
+import { cn } from "@/lib/utils";
+
+const MAX_TEXT_LENGTH = 1000; // 字符数上限
+const MEMORY_WARN_THRESHOLD = 10 * 1024 * 1024; // 10MB 软警告
+
+type Generation = {
+  id: string;
+  text: string;
+  voiceType: string;
+  speed: number;
+  volume: number;
+  pitch: number;
+  audioBlobUrl: string;
+  audioSize: number;
+  createdAt: number;
+};
+
+const getVoiceName = (id: string) => VOICES.find((v) => v.id === id)?.name ?? id;
+
+const buildDownloadName = (g: Generation) => {
+  const voice = getVoiceName(g.voiceType);
+  const d = new Date(g.createdAt);
+  const hhmm = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).replace(":", "");
+  return `tts-${voice}-${hhmm}.mp3`;
+};
+
+// ASR 页「送去 TTS」的文本由服务端 page 通过 prop 下发：挂载时一次性回填
+export default function TTSWorkspace({ incomingText }: { incomingText?: string }) {
+  const [text, setText] = useState(() => incomingText ?? "");
+  const [voiceType, setVoiceType] = useState(VOICES[0].id);
+  const [speed, setSpeed] = useState(1.0);
+  const [volume, setVolume] = useState(1.0);
+  const [pitch, setPitch] = useState(1.0);
+  const [audioSrc, setAudioSrc] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const { items: generations, add, remove: deleteGenerationById, clear: clearHistory } = useAudioHistory<Generation>();
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loadedText, setLoadedText] = useState("");
+  const [playingId, setPlayingId] = useState<string | null>(null);
+
+  const { config, hasConfig } = useLLMConfig();
+
+  const mainPlayerRef = useRef<AudioPlayerHandle>(null);
+  const inlineAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const dirty = text !== loadedText;
+  const totalSize = generations.reduce((sum, g) => sum + g.audioSize, 0);
+  const currentLength = text.length;
+  const isOverLimit = currentLength > MAX_TEXT_LENGTH;
+
+  // ASR 页送来的识别文本已通过惰性初始化回填，无需额外 effect
+
+  const handleGenerate = async () => {
+    if (!text.trim() || isOverLimit) return;
+    setError(undefined);
+    // 清空播放器并解除 active 锚定：新音频只入历史，不自动加载
+    setAudioSrc(undefined);
+    setActiveId(null);
+    setIsLoading(true);
+
+    try {
+      const result = await textToSpeech({
+        text: text.trim(),
+        voiceType,
+        speed,
+        volume,
+        pitch,
+        encoding: "mp3",
+      });
+
+      if (result.success && result.audioBase64) {
+        const buffer = base64ToArrayBuffer(result.audioBase64);
+        const blob = new Blob([buffer], { type: "audio/mp3" });
+        const gen: Generation = {
+          id: randomId(),
+          text: text.trim(),
+          voiceType,
+          speed,
+          volume,
+          pitch,
+          audioBlobUrl: URL.createObjectURL(blob),
+          audioSize: blob.size,
+          createdAt: Date.now(),
+        };
+        // 锚定当前文本，避免误触发切换确认
+        setLoadedText(text);
+        add(gen);
+      } else {
+        setError(result.error || "生成失败");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "生成失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handlePolish = async () => {
+    if (!text.trim() || !hasConfig) return;
+    setError(undefined);
+    setIsLoading(true);
+
+    try {
+      const outcome = await applyPolish(text, config);
+      if (outcome.ok && outcome.text) {
+        setText(outcome.text);
+      } else {
+        setError(outcome.error || "润色失败");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "润色失败");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadGeneration = (gen: Generation) => {
+    if (gen.id === activeId && audioSrc === gen.audioBlobUrl) return;
+    if (dirty && !window.confirm("当前文本未保存，切换将丢失，是否继续？")) return;
+    // 加载到主播放器前，暂停就地播放（联动）
+    if (inlineAudioRef.current) {
+      inlineAudioRef.current.pause();
+    }
+    setPlayingId(null);
+    setText(gen.text);
+    setVoiceType(gen.voiceType);
+    setSpeed(gen.speed);
+    setVolume(gen.volume);
+    setPitch(gen.pitch);
+    setAudioSrc(gen.audioBlobUrl);
+    setLoadedText(gen.text);
+    setActiveId(gen.id);
+  };
+
+  const toggleInlinePlay = (g: Generation) => {
+    const audio = inlineAudioRef.current;
+    if (!audio) return;
+    if (playingId === g.id) {
+      // 再次点击同一条 -> 暂停
+      audio.pause();
+      setPlayingId(null);
+      return;
+    }
+    // 切换到新条目前，暂停主播放器（联动，避免并发）
+    mainPlayerRef.current?.pause();
+    audio.src = g.audioBlobUrl;
+    // 播放成功才点亮图标，避免自动播放被拒时图标与实际状态不符
+    audio
+      .play()
+      .then(() => setPlayingId(g.id))
+      .catch(() => {});
+  };
+
+  const handleDownload = (g: Generation) => {
+    const link = document.createElement("a");
+    link.href = g.audioBlobUrl;
+    link.download = buildDownloadName(g);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const deleteGeneration = (id: string) => {
+    deleteGenerationById(id);
+    if (activeId === id) {
+      setActiveId(null);
+      setAudioSrc(undefined);
+      setLoadedText("");
+    }
+    if (playingId === id) {
+      if (inlineAudioRef.current) inlineAudioRef.current.pause();
+      setPlayingId(null);
+    }
+  };
+
+  const clearAll = () => {
+    if (generations.length === 0) return;
+    if (inlineAudioRef.current) inlineAudioRef.current.pause();
+    clearHistory();
+    setActiveId(null);
+    setAudioSrc(undefined);
+    setPlayingId(null);
+    // 不动 Textarea 文本：清空音频历史与文本输入无关
+  };
+
+  // 主播放器开始播放 -> 暂停就地播放（联动，避免并发）
+  const handleMainPlayChange = (playing: boolean) => {
+    if (!playing) return;
+    if (inlineAudioRef.current) inlineAudioRef.current.pause();
+    setPlayingId(null);
+  };
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-bold">文字转语音</h1>
+        <p className="text-muted-foreground">输入文字，选择音色，一键生成语音。历史项支持就地播放与下载。</p>
+      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>文本内容</CardTitle>
+          <CardDescription>
+            建议控制在 {MAX_TEXT_LENGTH} 字符以内（当前 {currentLength} 字符）
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="relative">
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="请输入要合成的文字..."
+              rows={10}
+              className={isOverLimit ? "border-destructive" : ""}
+            />
+            <div className="absolute bottom-2 right-2 text-xs text-muted-foreground">
+              {currentLength}/{MAX_TEXT_LENGTH}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePolish}
+              disabled={!hasConfig || !text.trim() || isLoading}
+              className="gap-1.5"
+            >
+              <Sparkles className="h-4 w-4" />
+              AI 润色
+            </Button>
+            {!hasConfig && (
+              <span className="text-xs text-muted-foreground">
+                （未配置大模型，润色功能已禁用）
+              </span>
+            )}
+            {activeId && dirty && (
+              <span className="text-xs text-amber-600 dark:text-amber-400">
+                已修改未保存：切换历史项将丢失当前编辑
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>音色与效果</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <VoiceControls
+            voiceType={voiceType}
+            onVoiceChange={setVoiceType}
+            speed={speed}
+            onSpeedChange={setSpeed}
+            volume={volume}
+            onVolumeChange={setVolume}
+            pitch={pitch}
+            onPitchChange={setPitch}
+          />
+        </CardContent>
+      </Card>
+
+      {error && <Alert variant="destructive">{error}</Alert>}
+
+      <Button
+        size="lg"
+        onClick={handleGenerate}
+        disabled={!text.trim() || isOverLimit || isLoading}
+        className="w-full gap-2"
+      >
+        <Wand2 className="h-5 w-5" />
+        {isLoading ? "生成中..." : "生成语音"}
+      </Button>
+
+      <AudioPlayer
+        ref={mainPlayerRef}
+        src={audioSrc}
+        isLoading={isLoading}
+        fileName="tts-output.mp3"
+        onPlayChange={handleMainPlayChange}
+      />
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <CardTitle>
+                生成历史
+                {generations.length > 0 && (
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    （{generations.length}）· 共 {formatSize(totalSize)}
+                  </span>
+                )}
+              </CardTitle>
+              {totalSize > MEMORY_WARN_THRESHOLD && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  音频占用较高，建议清理不再需要的历史
+                </p>
+              )}
+            </div>
+            {generations.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearAll}
+                disabled={isLoading}
+                className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+              >
+                <Trash2 className="h-3 w-3" />
+                清空
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="max-h-96 space-y-2 overflow-y-auto pr-1">
+            {generations.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                尚无生成记录，点击上方「生成语音」开始
+              </p>
+            ) : (
+              generations.map((g) => {
+                const isPlaying = playingId === g.id;
+                return (
+                  <div
+                    key={g.id}
+                    className={cn(
+                      "rounded-md border p-3 transition-colors",
+                      activeId === g.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:bg-muted/50"
+                    )}
+                  >
+                    <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3 shrink-0" />
+                      <span className="shrink-0">{formatTime(g.createdAt)}</span>
+                      <Mic2 className="h-3 w-3 shrink-0" />
+                      <span className="shrink-0 truncate">{getVoiceName(g.voiceType)}</span>
+                      <span className="shrink-0">· {formatSize(g.audioSize)}</span>
+                    </div>
+                    <p className="line-clamp-2 text-sm">{g.text || "（无文本）"}</p>
+                    <div className="mt-2 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => toggleInlinePlay(g)}
+                        disabled={isLoading}
+                        aria-label={isPlaying ? "暂停" : "播放"}
+                        title={isPlaying ? "暂停" : "播放"}
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded transition-colors hover:bg-muted disabled:opacity-50",
+                          isPlaying ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDownload(g)}
+                        disabled={isLoading}
+                        aria-label="下载语音"
+                        title="下载语音"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => loadGeneration(g)}
+                        disabled={isLoading}
+                        aria-label="加载到表单"
+                        title="加载到表单并送入播放器"
+                        className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteGeneration(g.id)}
+                        disabled={isLoading}
+                        aria-label="删除该条"
+                        title="删除该条"
+                        className="ml-auto flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 就地播放共享音频元素：项项互斥，单一实例即可 */}
+      <audio ref={inlineAudioRef} onEnded={() => setPlayingId(null)} className="hidden" />
+    </div>
+  );
+}

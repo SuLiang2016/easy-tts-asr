@@ -8,6 +8,7 @@ interface AlertProps extends HTMLAttributes<HTMLDivElement> {
 export function Alert({ className, variant = "default", ...props }: AlertProps) {
   return (
     <div
+      role={variant === "destructive" ? "alert" : "status"}
       className={cn(
         "relative w-full rounded-lg border p-4 text-sm",
         variant === "destructive"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useImperativeHandle, forwardRef } from "react";
+import { useEffect, useState, useRef, useImperativeHandle, forwardRef } from "react";
 import { Play, Pause, Download, Loader2 } from "lucide-react";
 import { Button } from "./button";
 
@@ -15,6 +15,10 @@ export interface AudioPlayerHandle {
   pause: () => void;
 }
 
+/**
+ * 音频播放器：单个 <audio controls> 承载全部播放控制，
+ * 自定义按钮与原生控件操作同一元素，天然互斥（旧版双元素会重叠出声）。
+ */
 export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   ({ src, isLoading, fileName = "audio.mp3", onPlayChange }, ref) => {
     const [isPlaying, setIsPlaying] = useState(false);
@@ -30,12 +34,19 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       []
     );
 
+    // 换源时停止旧播放状态
+    useEffect(() => {
+      setIsPlaying(false);
+      onPlayChange?.(false);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [src]);
+
     const togglePlay = () => {
       if (!audioRef.current) return;
       if (isPlaying) {
         audioRef.current.pause();
       } else {
-        audioRef.current.play();
+        audioRef.current.play().catch(() => {});
       }
     };
 
@@ -68,30 +79,36 @@ export const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     return (
       <div className="flex items-center gap-3 rounded-md border border-border bg-card p-3">
-        <audio
-          ref={audioRef}
-          src={src}
-          onPlay={() => {
-            setIsPlaying(true);
-            onPlayChange?.(true);
-          }}
-          onPause={() => {
-            setIsPlaying(false);
-            onPlayChange?.(false);
-          }}
-          onEnded={() => {
-            setIsPlaying(false);
-            onPlayChange?.(false);
-          }}
-          className="hidden"
-        />
-        <Button variant="outline" size="icon" onClick={togglePlay}>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={togglePlay}
+          aria-label={isPlaying ? "暂停" : "播放"}
+          title={isPlaying ? "暂停" : "播放"}
+        >
           {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
         </Button>
         <div className="flex-1">
-          <audio src={src} controls className="h-10 w-full" />
+          <audio
+            ref={audioRef}
+            src={src}
+            controls
+            onPlay={() => {
+              setIsPlaying(true);
+              onPlayChange?.(true);
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+              onPlayChange?.(false);
+            }}
+            onEnded={() => {
+              setIsPlaying(false);
+              onPlayChange?.(false);
+            }}
+            className="h-10 w-full"
+          />
         </div>
-        <Button variant="outline" size="icon" onClick={handleDownload} title="下载音频">
+        <Button variant="outline" size="icon" onClick={handleDownload} title="下载音频" aria-label="下载音频">
           <Download className="h-4 w-4" />
         </Button>
       </div>

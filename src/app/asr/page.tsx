@@ -1,17 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, Volume2, Sparkles, FileAudio, Mic, Clock, X, Trash2 } from "lucide-react";
-import { speechToText } from "@/app/actions";
-import { polishText } from "@/app/actions-llm";
+import { Copy, Volume2, Sparkles, FileAudio, Mic, Clock, X, Trash2, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { AudioRecorder } from "@/components/audio-recorder";
-import { fileToBase64, convertToWav } from "@/lib/audio";
+import { prepareAudioForASR } from "@/lib/audio";
 import { useLLMConfig } from "@/lib/use-llm-config";
+import { applyPolish } from "@/lib/polish";
+import { copyToClipboard } from "@/lib/clipboard";
+import { formatTime } from "@/lib/format";
+import { randomId } from "@/lib/random";
+import { useAudioHistory } from "@/hooks/use-audio-history";
 import { cn } from "@/lib/utils";
 
 const MAX_FILE_SIZE_MB = 20;
@@ -25,75 +28,63 @@ type Recognition = {
   createdAt: number;
 };
 
-const formatTime = (ts: number) => {
-  const d = new Date(ts);
-  const now = new Date();
-  const time = d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
-  if (d.toDateString() === now.toDateString()) return time;
-  return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
-};
-
 export default function ASRPage() {
-  const [recognitions, setRecognitions] = useState<Recognition[]>([]);
+  const { items: recognitions, add, remove: deleteRecognitionById, clear: clearHistory } = useAudioHistory<Recognition>();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [loadedText, setLoadedText] = useState(""); // 加载到 Textarea 时的快照，用于检测 dirty
   const [error, setError] = useState<string>();
   const [isLoading, setIsLoading] = useState(false);
   const [fileName, setFileName] = useState<string>();
+  const [copied, setCopied] = useState(false);
+  const busyRef = useRef(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const router = useRouter();
   const { config, hasConfig } = useLLMConfig();
 
   const dirty = text !== loadedText;
 
   const processAudio = async (file: File, source: "record" | "upload") => {
+    // 并发守卫：处理中忽略新提交，避免 fileName/loading/错误状态互相覆盖
+    if (busyRef.current) {
+      setError("正在处理中，请等待当前任务完成");
+      return;
+    }
     if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
       setError(`文件过大，请限制在 ${MAX_FILE_SIZE_MB}MB 以内`);
       return;
     }
 
+    busyRef.current = true;
     setError(undefined);
     setIsLoading(true);
     setFileName(file.name);
 
     try {
-      let audioFile = file;
-      if (!file.type.includes("wav")) {
-        try {
-          const wavBlob = await convertToWav(file);
-          audioFile = new File([wavBlob], "recording.wav", { type: "audio/wav" });
-        } catch {
-          throw new Error("音频格式转换失败，请尝试上传 wav 文件");
-        }
-      }
+      // 统一前置处理：任何格式 -> 16kHz 单声道 WAV + 300ms 尾部静音
+      const prepared = await prepareAudioForASR(file);
 
-      const base64 = await fileToBase64(audioFile);
-      // mp3 的 MIME 可能是 audio/mp3 或 audio/mpeg，都需识别为 mp3
-      const lowerName = audioFile.name.toLowerCase();
-      const format = (audioFile.type.includes("mp3") || audioFile.type.includes("mpeg") || lowerName.endsWith(".mp3"))
-        ? "mp3"
-        : (audioFile.type.includes("ogg") || lowerName.endsWith(".ogg"))
-        ? "ogg"
-        : "wav";
-
-      const result = await speechToText({ audioBase64: base64, format });
+      // 5 分钟长音频走 Route Handler + FormData：免 base64 膨胀与 bodySizeLimit
+      const form = new FormData();
+      form.append("audio", prepared.blob, "audio.wav");
+      const response = await fetch("/api/asr", { method: "POST", body: form });
+      const result = (await response.json()) as { success: boolean; text?: string; error?: string };
 
       if (result.success && result.text !== undefined) {
-        const rec: Recognition = {
-          id: crypto.randomUUID(),
+        add({
+          id: randomId(),
           text: result.text,
           source,
           fileName: source === "upload" ? file.name : undefined,
           createdAt: Date.now(),
-        };
-        // 新识别只入列表，不自动加载到 Textarea（按设计）
-        setRecognitions((prev) => [rec, ...prev]);
+        });
       } else {
         setError(result.error || "识别失败");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "处理失败");
     } finally {
+      busyRef.current = false;
       setIsLoading(false);
     }
   };
@@ -115,7 +106,7 @@ export default function ASRPage() {
   };
 
   const deleteItem = (id: string) => {
-    setRecognitions((prev) => prev.filter((r) => r.id !== id));
+    deleteRecognitionById(id);
     if (activeId === id) {
       setActiveId(null);
       setText("");
@@ -126,7 +117,7 @@ export default function ASRPage() {
   const clearAll = () => {
     if (recognitions.length === 0) return;
     if (dirty && !window.confirm("当前文字未保存，清空将丢失，是否继续？")) return;
-    setRecognitions([]);
+    clearHistory();
     setActiveId(null);
     setText("");
     setLoadedText("");
@@ -134,7 +125,10 @@ export default function ASRPage() {
 
   const handleCopy = async () => {
     if (!text) return;
-    await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    setCopied(ok);
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   const handlePolish = async () => {
@@ -143,11 +137,12 @@ export default function ASRPage() {
     setIsLoading(true);
 
     try {
-      const result = await polishText({ text: text.trim(), config });
-      if (result.success && result.polishedText) {
-        setText(result.polishedText);
+      const outcome = await applyPolish(text, config);
+      if (outcome.ok && outcome.text) {
+        setText(outcome.text);
+        setLoadedText(outcome.text); // 润色结果视为已锚定，避免误报 dirty
       } else {
-        setError(result.error || "润色失败");
+        setError(outcome.error || "润色失败");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "润色失败");
@@ -158,8 +153,7 @@ export default function ASRPage() {
 
   const handleSendToTTS = () => {
     if (!text.trim()) return;
-    const encoded = encodeURIComponent(text);
-    router.push(`/tts?text=${encoded}`);
+    router.push(`/tts?text=${encodeURIComponent(text)}`);
   };
 
   return (
@@ -173,7 +167,7 @@ export default function ASRPage() {
         <CardHeader>
           <CardTitle>上传或录音</CardTitle>
           <CardDescription>
-            支持 mp3 / wav / ogg 格式，时长建议不超过 {MAX_DURATION_SECONDS / 60} 分钟
+            支持 mp3 / wav / ogg 等常见格式，时长建议不超过 {MAX_DURATION_SECONDS / 60} 分钟
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -190,7 +184,12 @@ export default function ASRPage() {
               />
             </label>
             <div className="flex flex-1 items-center justify-center rounded-lg border border-border bg-card p-4">
-              <AudioRecorder onAudioReady={(f) => processAudio(f, "record")} maxDurationSeconds={MAX_DURATION_SECONDS} />
+              <AudioRecorder
+                onAudioReady={(f) => processAudio(f, "record")}
+                onError={setError}
+                maxDurationSeconds={MAX_DURATION_SECONDS}
+                disabled={isLoading}
+              />
             </div>
           </div>
           {fileName && (
@@ -292,9 +291,15 @@ export default function ASRPage() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={handleCopy} disabled={!text || isLoading} className="gap-1.5">
-                    <Copy className="h-4 w-4" />
-                    复制文字
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopy}
+                    disabled={!text || isLoading}
+                    className="gap-1.5"
+                  >
+                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {copied ? "已复制" : "复制文字"}
                   </Button>
                   <Button
                     variant="outline"

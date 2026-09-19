@@ -12,10 +12,17 @@ const ENV_LOCAL = path.join(ROOT, ".env.local");
 
 const STARTER = `// 可移植启动器：加载同目录 .env.local（不存在则回退系统环境变量），再启动 Next standalone server
 const path = require("path");
-try {
-  process.loadEnvFile(path.join(__dirname, ".env.local"));
-} catch {
-  // .env.local 不存在或解析失败，使用系统环境变量
+if (typeof process.loadEnvFile === "function") {
+  try {
+    process.loadEnvFile(path.join(__dirname, ".env.local"));
+  } catch {
+    // .env.local 不存在或解析失败，使用系统环境变量
+  }
+} else if (!process.env.VOLC_API_KEY) {
+  console.error(
+    "[hello-tts] 当前 Node 版本低于 20.12，无法加载 dist/.env.local 兜底配置，且系统环境变量中没有 VOLC_API_KEY。"
+  );
+  console.error("[hello-tts] 请升级 Node 到 >= 20.12，或手动设置 VOLC_API_KEY 环境变量。");
 }
 require("./server.js");
 `;
@@ -23,6 +30,14 @@ require("./server.js");
 // 0. 前置检查：standalone 必须已构建
 if (!fs.existsSync(STANDALONE)) {
   console.error("✗ 未找到 .next/standalone，请先运行 npm run build");
+  process.exit(1);
+}
+if (!fs.existsSync(STATIC)) {
+  console.error("✗ 未找到 .next/static，构建产物不完整，请重新运行 npm run build");
+  process.exit(1);
+}
+if (!fs.existsSync(PUBLIC)) {
+  console.error("✗ 未找到 public/ 目录，请检查仓库完整性");
   process.exit(1);
 }
 
